@@ -17,6 +17,23 @@
 
   const MAX_LOG = 120;
 
+  // Patch 3: Dynasty & Traits
+  const TRAITS = ["brave", "cautious", "greedy"]; // codes
+  const TRAIT_LABEL = {
+    brave: "Храбрый",
+    cautious: "Осторожный",
+    greedy: "Жадный",
+  };
+  const NAME_POOL = [
+    "Ragnvald", "Olaf", "Yaropolk", "Sviatopolk", "Ingvar", "Ivar", "Boris",
+    "Harald", "Gleb", "Mstislav", "Vladimir", "Oleg", "Igor", "Rurik", "Sven",
+    "Eirik", "Yaroslav", "Dobrynya", "Rostislav", "Gorm", "Tryggve"
+  ];
+  function randomName() { return NAME_POOL[Math.floor(rand() * NAME_POOL.length)]; }
+  function randomTrait() { return TRAITS[Math.floor(rand() * TRAITS.length)]; }
+  function traitLabel(code) { return TRAIT_LABEL[code] || code; }
+  function facLabel(key) { return key === 'red' ? 'Красные' : 'Синие'; }
+
   // --- DOM ---
   const boardEl = document.getElementById("board");
   const logEl = document.getElementById("log");
@@ -155,6 +172,11 @@
 
     const red = { name: "Красные", key: "red", color: "red", capital: { x: layout.red.x, y: layout.red.y, alive: true }, units: [] };
     const blue = { name: "Синие", key: "blue", color: "blue", capital: { x: layout.blue.x, y: layout.blue.y, alive: true }, units: [] };
+    // Patch 3: initial leaders per faction
+    const redLeader = { name: randomName(), trait: randomTrait() };
+    const blueLeader = { name: randomName(), trait: randomTrait() };
+    red.leader = redLeader; red.leaders = [redLeader]; red.hadHeir = false;
+    blue.leader = blueLeader; blue.leaders = [blueLeader]; blue.hadHeir = false;
 
     const st = {
       size: layout.size,
@@ -176,6 +198,9 @@
 
     spawnInitialUnits(st, red);
     spawnInitialUnits(st, blue);
+    // Patch 3: announce leaders
+    log(`У ${facLabel('red')} появился Лидер: ${red.leader.name} ${traitLabel(red.leader.trait)}`);
+    log(`У ${facLabel('blue')} появился Лидер: ${blue.leader.name} ${traitLabel(blue.leader.trait)}`);
     return st;
   }
 
@@ -262,7 +287,8 @@
     shuffle(allUnits);
     for (const u of allUnits) {
       const enemyFaction = u.faction === "red" ? blue : red;
-      const { target, type } = chooseTarget(st, u, enemyFaction);
+      const ownFaction = u.faction === "red" ? red : blue;
+      const { target, type } = chooseTarget(st, u, ownFaction, enemyFaction);
       if (!target) continue;
 
       // Уже на цели-юните — не двигаемся
@@ -314,6 +340,8 @@
     }
 
     // 4) Победа/ничья (включая двойной снос и лимит ходов)
+    // Patch 3: heirs after capitals fall
+    handleHeirs(st, options);
     applyReinforcements(st, options);
     checkVictory(st, options);
 
@@ -321,7 +349,9 @@
   }
 
   // --- Выбор цели (анти-беготня: при равной дистанции — цель с наименьшим HP) ---
-  function chooseTarget(st, unit, enemyFaction) {
+  function chooseTarget(st, unit, ownFaction, enemyFaction) {
+    // Base targeting: nearest enemy unit, otherwise enemy capital
+    const trait = ownFaction.leader?.trait || null;
     let best = null;
     let bestDist = Infinity;
     for (const e of enemyFaction.units) {
@@ -329,8 +359,34 @@
       if (d < bestDist) { best = e; bestDist = d; }
       else if (d === bestDist && best && e.hp < best.hp) { best = e; }
     }
+
+    // Trait modifiers
+    const distToOwnCap = manhattan(unit, ownFaction.capital);
+    const capAlive = enemyFaction.capital.alive;
+    const armyCap = Number(st.config?.armyCap ?? Infinity);
+    const ownArmy = ownFaction.units.length;
+
+    // Cautious: stay closer to own capital
+    if (trait === 'cautious') {
+      if (distToOwnCap > 3) {
+        return { target: { x: ownFaction.capital.x, y: ownFaction.capital.y }, type: 'home' };
+      }
+    }
+
+    // Greedy: avoid attacking until near cap; gather at capital
+    if (trait === 'greedy' && ownArmy < Math.max(2, armyCap - 2)) {
+      return { target: { x: ownFaction.capital.x, y: ownFaction.capital.y }, type: 'home' };
+    }
+
+    // Brave: prefer enemy capital when alive
+    if (trait === 'brave' && capAlive) {
+      if (rand() < 0.7) {
+        return { target: { x: enemyFaction.capital.x, y: enemyFaction.capital.y }, type: 'capital' };
+      }
+    }
+
     if (best) return { target: { x: best.x, y: best.y }, type: "unit" };
-    if (enemyFaction.capital.alive) return { target: { x: enemyFaction.capital.x, y: enemyFaction.capital.y }, type: "capital" };
+    if (capAlive) return { target: { x: enemyFaction.capital.x, y: enemyFaction.capital.y }, type: "capital" };
     return { target: null, type: null };
   }
 
@@ -417,6 +473,56 @@
       fac.units.push(newWarrior(key, pick.x, pick.y));
       occ.add(`${pick.x},${pick.y}`);
       if (!options.silent) log(`${factionMark(key)}+ подкрепление @ ${pick.x},${pick.y}`);
+
+      // Patch 3: Greedy accumulates faster — try a second reinforcement if space
+      if (fac.leader?.trait === 'greedy' && fac.units.length < capLimit) {
+        const free2 = neigh.filter(p => !occ.has(`${p.x},${p.y}`) && !(p.x === capOther.x && p.y === capOther.y));
+        if (free2.length) {
+          const pick2 = free2[Math.floor(rand() * free2.length)];
+          fac.units.push(newWarrior(key, pick2.x, pick2.y));
+          occ.add(`${pick2.x},${pick2.y}`);
+          if (!options.silent) log(`${factionMark(key)}+ доп. набор (Жадный) @ ${pick2.x},${pick2.y}`);
+        }
+      }
+    }
+  }
+
+  // Patch 3: Dynasty handling — heirs and logging
+  function handleHeirs(st, options = { silent: false }) {
+    for (const key of ["red", "blue"]) {
+      const fac = st.factions[key];
+      if (fac.capital.alive) continue;
+
+      const unitsAlive = fac.units && fac.units.length > 0;
+      if (unitsAlive && !fac.hadHeir) {
+        // Spawn heir capital near a random unit
+        const heir = { name: randomName(), trait: randomTrait() };
+        const u = fac.units[Math.floor(rand() * fac.units.length)];
+        const spots = [];
+        for (let r = 1; r <= 2; r++) {
+          spots.push({ x: u.x + r, y: u.y });
+          spots.push({ x: u.x - r, y: u.y });
+          spots.push({ x: u.x, y: u.y + r });
+          spots.push({ x: u.x, y: u.y - r });
+        }
+        const valid = spots
+          .map(p => ({ x: clamp(p.x, 0, st.size - 1), y: clamp(p.y, 0, st.size - 1) }))
+          .filter(p => {
+            const occupied = st.factions.red.units.some(x => x.x === p.x && x.y === p.y)
+              || st.factions.blue.units.some(x => x.x === p.x && x.y === p.y);
+            const other = key === 'red' ? st.factions.blue.capital : st.factions.red.capital;
+            const otherCapHere = other.alive && other.x === p.x && other.y === p.y;
+            return !occupied && !otherCapHere;
+          });
+        const place = valid.length ? valid[Math.floor(rand() * valid.length)] : { x: u.x, y: u.y };
+        fac.capital = { x: place.x, y: place.y, alive: true };
+        fac.hadHeir = true;
+        fac.leader = heir;
+        fac.leaders.push(heir);
+        if (!options.silent) log(`${facLabel(key)} потеряли столицу, новый лидер: ${heir.name} ${traitLabel(heir.trait)}`);
+        // Visual feedback
+        st.highlights.push({ x: place.x, y: place.y, ttl: 3 });
+      }
     }
   }
 
@@ -444,7 +550,8 @@
     }
 
     // Оба упали в один ход
-    if (st._capKillThisTurn.red && st._capKillThisTurn.blue) {
+    // Patch 3: disabled simultaneous-capitals auto-draw (heirs may spawn)
+    if (false) {
       st.ended = true; st.winner = "Ничья";
       if (!options.silent) log("Ничья: двойной снос столиц в один ход", "win");
       stopLoop();
@@ -466,6 +573,12 @@
           lf ? `Ключевая схватка @ (${lf.x},${lf.y})` : null,
         ].filter(Boolean);
         for (const s of summary) log(s, "win");
+        // Patch 3: dynasty summary
+        log(`Победившая династия: ${st.winner}`, "win");
+        const redList = st.factions.red.leaders.map(l => `${l.name} ${traitLabel(l.trait)}`).join(" → ");
+        const blueList = st.factions.blue.leaders.map(l => `${l.name} ${traitLabel(l.trait)}`).join(" → ");
+        log(`Лидеры Красных: ${redList || '—'}`, "win");
+        log(`Лидеры Синих: ${blueList || '—'}`, "win");
       }
       stopLoop();
     }

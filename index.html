@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Мини-Стратегия v0.1</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header class="top">
+      <h1>Мини-Стратегия v0.1</h1>
+      <div class="controls">
+        <button id="startBtn">Старт</button>
+        <button id="stepBtn">Шаг</button>
+        <button id="resetBtn">Сброс</button>
+        <label class="speed">
+          Скорость:
+          <input id="speedRange" type="range" min="100" max="1000" step="50" value="400" />
+        </label>
+      </div>
+      <div class="stats">
+        <span id="turnInfo">Ход: 0</span>
+        <span id="redCount">Красные: 0</span>
+        <span id="blueCount">Синие: 0</span>
+      </div>
+    </header>
+
+    <main class="main">
+      <section class="board-wrap">
+        <div id="board" class="board" aria-label="Карта 10x10"></div>
+      </section>
+      <section class="log-wrap">
+        <h2>События</h2>
+        <div id="log" class="log" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <small>
+        Правила: 10×10, 2 фракции (красные/синие), юниты-воины ищут ближайшего
+        врага/столицу, движутся и сражаются. Побеждает сторона со своей столицей.
+      </small>
+    </footer>
+
+    <script src="main.js"></script>
+  </body>
+  </html>
+

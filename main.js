@@ -9,6 +9,10 @@
     initialUnits: 6,
     rngSpread: 20, // 0..X
     turnLimit: 200,
+    // Patch 2
+    formation: "cluster", // cluster | line | wedge
+    reinforceEvery: 20, // 0 = off
+    armyCap: 12,
   };
 
   const MAX_LOG = 120;
@@ -33,6 +37,51 @@
   const blueCountEl = document.getElementById("blueCount");
   const combatInfo = document.getElementById("combatInfo");
 
+  // Patch 2: dynamic controls for formation, reinforcements, army cap, seed/replay
+  const controlsWrap = document.querySelector('.controls');
+  let formationSelect = null;
+  let reinforceSelect = null;
+  let armyCapRange = null;
+  let armyCapVal = null;
+  let seedInfo = null;
+  let replayBtn = null;
+
+  function ensureExtraControls() {
+    if (!controlsWrap) return;
+    // Formation select
+    if (!formationSelect) {
+      const span = document.createElement('span'); span.className = 'group';
+      const label = document.createElement('label'); label.htmlFor = 'formationSelect'; label.textContent = 'Построение:';
+      formationSelect = document.createElement('select'); formationSelect.id = 'formationSelect';
+      formationSelect.innerHTML = '<option value="cluster">Куча</option><option value="line">Линия</option><option value="wedge">Клин</option>';
+      span.appendChild(label); span.appendChild(formationSelect); controlsWrap.appendChild(span);
+    }
+    // Reinforcements select
+    if (!reinforceSelect) {
+      const span = document.createElement('span'); span.className = 'group';
+      const label = document.createElement('label'); label.htmlFor = 'reinforceSelect'; label.textContent = 'Подкрепления:';
+      reinforceSelect = document.createElement('select'); reinforceSelect.id = 'reinforceSelect';
+      reinforceSelect.innerHTML = '<option value="0">Выкл</option><option value="20" selected>20</option><option value="30">30</option>';
+      span.appendChild(label); span.appendChild(reinforceSelect); controlsWrap.appendChild(span);
+    }
+    // Army cap range
+    if (!armyCapRange) {
+      const span = document.createElement('span'); span.className = 'group';
+      const label = document.createElement('label'); label.htmlFor = 'armyCapRange'; label.textContent = 'Лимит армии:';
+      armyCapRange = document.createElement('input'); armyCapRange.type = 'range'; armyCapRange.min = '8'; armyCapRange.max = '20'; armyCapRange.step = '1'; armyCapRange.value = '12'; armyCapRange.id = 'armyCapRange';
+      armyCapVal = document.createElement('span'); armyCapVal.id = 'armyCapVal'; armyCapVal.textContent = '12';
+      span.appendChild(label); span.appendChild(armyCapRange); span.appendChild(armyCapVal); controlsWrap.appendChild(span);
+    }
+    // Seed + Replay controls
+    if (!seedInfo || !replayBtn) {
+      const span = document.createElement('span'); span.className = 'group';
+      const label = document.createElement('label'); label.textContent = 'Seed:';
+      seedInfo = document.createElement('span'); seedInfo.id = 'seedInfo'; seedInfo.textContent = '—';
+      replayBtn = document.createElement('button'); replayBtn.id = 'replayBtn'; replayBtn.title = 'Повторить матч с тем же сидом'; replayBtn.textContent = 'Повторить'; replayBtn.style.display = 'none';
+      span.appendChild(label); span.appendChild(seedInfo); span.appendChild(replayBtn); controlsWrap.appendChild(span);
+    }
+  }
+
   // --- Глобальное состояние ---
   let state = null;
   let running = false;
@@ -42,7 +91,19 @@
   const id = (() => { let i = 1; return () => i++; })();
   const clamp = (v, min, max) => Math.max(min, Math.min(max, v));
   const manhattan = (a, b) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
-  const rnd = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  // Seeded RNG (Mulberry32)
+  let _rng = null;
+  function _mulberry32(a) {
+    return function() {
+      let t = a += 0x6D2B79F5;
+      t = Math.imul(t ^ (t >>> 15), 1 | t);
+      t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function setSeed(seed) { _rng = _mulberry32((seed >>> 0) || 1); }
+  function rand() { return _rng ? _rng() : Math.random(); }
+  const rnd = (min, max) => Math.floor(rand() * (max - min + 1)) + min;
   const factionMark = (f) => (f === "red" ? "R" : "B");
 
   function log(msg, css = "") {
@@ -56,7 +117,7 @@
 
   function shuffle(arr) {
     for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(rand() * (i + 1));
       [arr[i], arr[j]] = [arr[j], arr[i]];
     }
   }
@@ -81,7 +142,15 @@
       initialUnits: Number(unitsRange?.value ?? DEFAULTS.initialUnits),
       rngSpread: Number(rngRange?.value ?? DEFAULTS.rngSpread),
       turnLimit: Number(limitRange?.value ?? DEFAULTS.turnLimit),
+      formation: (typeof formationSelect !== 'undefined' && formationSelect?.value) ? formationSelect.value : DEFAULTS.formation,
+      reinforceEvery: (typeof reinforceSelect !== 'undefined' && reinforceSelect?.value != null) ? Number(reinforceSelect.value) : DEFAULTS.reinforceEvery,
+      armyCap: (typeof armyCapRange !== 'undefined' && armyCapRange?.value != null) ? Number(armyCapRange.value) : DEFAULTS.armyCap,
+      seed: null,
     };
+    // Seed for determinism and replay
+    if (window._nextSeed != null) { conf.seed = Number(window._nextSeed) >>> 0; window._nextSeed = null; }
+    else { conf.seed = Math.floor(Math.random() * 0xFFFFFFFF) >>> 0; }
+    setSeed(conf.seed);
     const layout = computePreset(conf);
 
     const red = { name: "Красные", key: "red", color: "red", capital: { x: layout.red.x, y: layout.red.y, alive: true }, units: [] };
@@ -113,17 +182,67 @@
   function spawnInitialUnits(st, faction) {
     const { x: cx, y: cy } = faction.capital;
     const placed = new Set([`${cx},${cy}`]);
-    for (let i = 0; i < st.config.initialUnits; i++) {
-      let tries = 0, x, y;
-      do {
-        x = clamp(cx + rnd(-2, 2), 0, st.size - 1);
-        y = clamp(cy + rnd(-2, 2), 0, st.size - 1);
-        tries++;
-        if (tries > 50) break;
-      } while (placed.has(`${x},${y}`));
+    const candidates = generateFormationCandidates(st, faction, st.config.formation || 'cluster');
+    let placedCount = 0;
+    for (const p of candidates) {
+      if (placedCount >= st.config.initialUnits) break;
+      if (p.x < 0 || p.y < 0 || p.x >= st.size || p.y >= st.size) continue;
+      if (placed.has(`${p.x},${p.y}`)) continue;
+      const rc = st.factions.red.capital, bc = st.factions.blue.capital;
+      if ((p.x === rc.x && p.y === rc.y) || (p.x === bc.x && p.y === bc.y)) continue;
+      placed.add(`${p.x},${p.y}`);
+      faction.units.push(newWarrior(faction.key, p.x, p.y));
+      placedCount++;
+    }
+    // Fallback random fill near capital if needed
+    let tries = 0;
+    while (placedCount < st.config.initialUnits && tries < 200) {
+      const x = clamp(cx + rnd(-2, 2), 0, st.size - 1);
+      const y = clamp(cy + rnd(-2, 2), 0, st.size - 1);
+      tries++;
+      if (placed.has(`${x},${y}`)) continue;
       placed.add(`${x},${y}`);
       faction.units.push(newWarrior(faction.key, x, y));
+      placedCount++;
     }
+  }
+
+  function generateFormationCandidates(st, faction, formation) {
+    const { x: cx, y: cy } = faction.capital;
+    const enemy = faction.key === 'red' ? st.factions.blue.capital : st.factions.red.capital;
+    const dx = Math.sign(enemy.x - cx);
+    const dy = Math.sign(enemy.y - cy);
+    const primary = (Math.abs(enemy.x - cx) >= Math.abs(enemy.y - cy)) ? 'x' : 'y';
+    const sx = primary === 'x' ? (dx || 1) : 0;
+    const sy = primary === 'y' ? (dy || 1) : 0;
+    const list = [];
+
+    if (formation === 'line') {
+      for (let d = 1; d <= st.size; d++) list.push({ x: cx + sx * d, y: cy + sy * d });
+      return list;
+    }
+    if (formation === 'wedge') {
+      const rows = Math.max(4, Math.ceil(st.config.initialUnits / 2));
+      for (let r = 1; r <= rows; r++) {
+        const width = r;
+        for (let k = -Math.floor((width - 1) / 2); k <= Math.floor(width / 2); k++) {
+          if (primary === 'x') list.push({ x: cx + sx * r, y: cy + k });
+          else list.push({ x: cx + k, y: cy + sy * r });
+        }
+      }
+      return list;
+    }
+    // cluster default: random-ish near capital (radius 2)
+    const seen = new Set();
+    let attempts = 0;
+    while (list.length < st.config.initialUnits * 3 && attempts < 200) {
+      attempts++;
+      const px = clamp(cx + rnd(-2, 2), 0, st.size - 1);
+      const py = clamp(cy + rnd(-2, 2), 0, st.size - 1);
+      const key = `${px},${py}`;
+      if (!seen.has(key) && !(px === cx && py === cy)) { list.push({ x: px, y: py }); seen.add(key); }
+    }
+    return list;
   }
 
   function newWarrior(factionKey, x, y) {
@@ -155,7 +274,7 @@
       const dy = Math.sign(target.y - u.y);
       const distX = Math.abs(target.x - u.x);
       const distY = Math.abs(target.y - u.y);
-      const stepAxis = distX > distY ? "x" : distY > distX ? "y" : (Math.random() < 0.5 ? "x" : "y");
+      const stepAxis = distX > distY ? "x" : distY > distX ? "y" : (rand() < 0.5 ? "x" : "y");
       if (stepAxis === "x") u.x = clamp(u.x + dx, 0, st.size - 1);
       else u.y = clamp(u.y + dy, 0, st.size - 1);
     }
@@ -195,6 +314,7 @@
     }
 
     // 4) Победа/ничья (включая двойной снос и лимит ходов)
+    applyReinforcements(st, options);
     checkVictory(st, options);
 
     return st;
@@ -266,6 +386,40 @@
     return { cells: fightCells };
   }
 
+  // Patch 2: drip reinforcements
+  function applyReinforcements(st, options = { silent: false }) {
+    const K = Number(st.config?.reinforceEvery || 0);
+    if (!K) return;
+    if (st.turn === 0) return; // no reinforcements at turn 0
+    if (st.turn % K !== 0) return;
+
+    const occ = new Set();
+    for (const u of st.factions.red.units) occ.add(`${u.x},${u.y}`);
+    for (const u of st.factions.blue.units) occ.add(`${u.x},${u.y}`);
+
+    for (const key of ["red", "blue"]) {
+      const fac = st.factions[key];
+      if (!fac.capital.alive) continue;
+      const cap = fac.capital;
+      const capOther = key === 'red' ? st.factions.blue.capital : st.factions.red.capital;
+      // Army size cap
+      const capLimit = Number(st.config?.armyCap ?? Infinity);
+      if (fac.units.length >= capLimit) continue;
+      const neigh = [
+        { x: cap.x + 1, y: cap.y },
+        { x: cap.x - 1, y: cap.y },
+        { x: cap.x, y: cap.y + 1 },
+        { x: cap.x, y: cap.y - 1 },
+      ].filter(p => p.x >= 0 && p.y >= 0 && p.x < st.size && p.y < st.size);
+      const free = neigh.filter(p => !occ.has(`${p.x},${p.y}`) && !(p.x === capOther.x && p.y === capOther.y));
+      if (!free.length) continue; // skip silently
+      const pick = free[Math.floor(rand() * free.length)];
+      fac.units.push(newWarrior(key, pick.x, pick.y));
+      occ.add(`${pick.x},${pick.y}`);
+      if (!options.silent) log(`${factionMark(key)}+ подкрепление @ ${pick.x},${pick.y}`);
+    }
+  }
+
   function decayHighlights(st) {
     const next = [];
     for (const h of st.highlights) {
@@ -319,6 +473,9 @@
 
   // --- Рендер ---
   function render(st) {
+    // Patch 2: show seed and replay toggle
+    if (seedInfo) seedInfo.textContent = (st && st.config && st.config.seed != null) ? String(st.config.seed) : '—';
+    if (replayBtn) replayBtn.style.display = (st && st.ended) ? '' : 'none';
     turnInfo.textContent = `Ходы: ${st.turn}`;
     redCountEl.textContent = `Красные: ${st.factions.red.units.length}`;
     blueCountEl.textContent = `Синие: ${st.factions.blue.units.length}`;
@@ -440,14 +597,24 @@
   limitRange.addEventListener("input", () => { limitVal.textContent = limitRange.value; });
   limitRange.addEventListener("change", () => reset());
 
+  // Patch 2: init extra controls and events
+  ensureExtraControls();
+  if (formationSelect) formationSelect.addEventListener('change', () => reset());
+  if (reinforceSelect) reinforceSelect.addEventListener('change', () => reset());
+  if (armyCapRange) {
+    armyCapRange.addEventListener('input', () => { if (armyCapVal) armyCapVal.textContent = armyCapRange.value; });
+    armyCapRange.addEventListener('change', () => reset());
+  }
+  if (replayBtn) replayBtn.addEventListener('click', () => { if (state && state.config && state.config.seed != null) { window._nextSeed = state.config.seed; reset(); } });
+
   // --- Инициализация ---
   // начальные значения подсказок
   if (unitsVal) unitsVal.textContent = unitsRange.value;
   if (rngVal) rngVal.textContent = rngRange.value;
   if (limitVal) limitVal.textContent = limitRange.value;
+  if (armyCapVal && armyCapRange) armyCapVal.textContent = armyCapRange.value;
 
   state = newGame();
   render(state);
   log("Добро пожаловать! Нажмите Старт или делайте шаги.", "muted");
 })();
-

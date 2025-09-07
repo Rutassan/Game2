@@ -56,7 +56,7 @@ body {
 .board-wrap { background: var(--panel); border: 1px solid #1f2440; padding: 12px; border-radius: 10px; }
 .board {
   display: grid;
-  grid-template-columns: repeat(10, var(--cell));
+  grid-template-columns: repeat(var(--size), var(--cell));
   grid-auto-rows: var(--cell);
   gap: var(--gap);
   background: #111429;
@@ -104,3 +104,14 @@ body {
 
 .foot { padding: 8px 16px; color: var(--muted); font-size: 12px; }
 
+/* Battle highlight */
+.cell.fight {
+  outline: 2px solid #ffd166;
+  box-shadow: 0 0 8px rgba(255, 209, 102, 0.7) inset;
+}
+
+/* Settings panel small tweaks */
+.controls .group { display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
+.controls label { color: var(--muted); font-size: 12px; }
+.controls input[type=range] { vertical-align: middle; }
+.controls select { background: #273059; color: var(--text); border: 1px solid #2f3968; padding: 4px 6px; border-radius: 6px; }

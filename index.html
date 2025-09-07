@@ -3,42 +3,66 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Мини-Стратегия v0.1</title>
+    <title>Авто-битва v1.0</title>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
     <header class="top">
-      <h1>Мини-Стратегия v0.1</h1>
+      <h1>Авто-битва v1.0</h1>
       <div class="controls">
         <button id="startBtn">Старт</button>
         <button id="stepBtn">Шаг</button>
         <button id="resetBtn">Сброс</button>
-        <label class="speed">
-          Скорость:
+        <button id="seriesBtn" title="Серия Best of 5">Серия</button>
+        <span class="group">
+          <label>Скорость:</label>
           <input id="speedRange" type="range" min="100" max="1000" step="50" value="400" />
-        </label>
+        </span>
+        <span class="group">
+          <label for="presetSelect">Пресет:</label>
+          <select id="presetSelect">
+            <option value="basic">Базовый</option>
+            <option value="blitz">Блиц</option>
+            <option value="long">Дальний марш</option>
+          </select>
+        </span>
+        <span class="group">
+          <label for="unitsRange">Старт. воины:</label>
+          <input id="unitsRange" type="range" min="4" max="10" step="1" value="6" />
+          <span id="unitsVal">6</span>
+        </span>
+        <span class="group">
+          <label for="rngRange">Разброс боя:</label>
+          <input id="rngRange" type="range" min="0" max="40" step="2" value="20" />
+          <span id="rngVal">20</span>
+        </span>
+        <span class="group">
+          <label for="limitRange">Лимит ходов:</label>
+          <input id="limitRange" type="range" min="50" max="400" step="10" value="200" />
+          <span id="limitVal">200</span>
+        </span>
       </div>
       <div class="stats">
-        <span id="turnInfo">Ход: 0</span>
+        <span id="turnInfo">Ходы: 0</span>
         <span id="redCount">Красные: 0</span>
         <span id="blueCount">Синие: 0</span>
+        <span id="combatInfo">Без боёв: 0</span>
       </div>
     </header>
 
     <main class="main">
       <section class="board-wrap">
-        <div id="board" class="board" aria-label="Карта 10x10"></div>
+        <div id="board" class="board" aria-label="Поле"></div>
       </section>
       <section class="log-wrap">
-        <h2>События</h2>
+        <h2>Лог</h2>
         <div id="log" class="log" aria-live="polite"></div>
       </section>
     </main>
 
     <footer class="foot">
       <small>
-        Правила: 10×10, 2 фракции (красные/синие), юниты-воины ищут ближайшего
-        врага/столицу, движутся и сражаются. Побеждает сторона со своей столицей.
+        Пустая карта, 2 стороны (красные/синие), простые схватки. Без экономики/ландшафта/апгрейдов.
       </small>
     </footer>
 
